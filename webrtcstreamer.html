@@ -1,10 +1,16 @@
 <html>
 <head>
+<meta charset="utf-8">
 <link rel="stylesheet" type="text/css" href="styles.css">
 <script src="libs/adapter.min.js" ></script>
 <script src="webrtcconfig.js" ></script>
 <script src="webrtcstreamer.js" ></script>
+<script src="playercontrols.js" ></script>
 <script>        
+	if (typeof URLSearchParams != 'undefined' && new URLSearchParams(location.search).get("video") === "null") {
+		// a cancelled prompt is encoded as the literal string "null", drop it and prompt again
+		history.replaceState(null, "", location.pathname);
+	}
 	if (location.search.slice(1)) {
 		let url = { video:location.search.slice(1) };  
 		let options = webrtcConfig.options;
@@ -23,19 +29,24 @@
 		} 	    
 		window.onload         = function() {
 			this.webRtcServer = new WebRtcStreamer("video", webrtcConfig.url);
-			document.getElementById("title").innerText = url.video; 
+			document.getElementById("title").innerText = url.video;
 			webRtcServer.connect(url.video, url.audio, options, undefined, codec);
-			fetch(webrtcConfig.url + "/api/version").then(r => r.text()).then( (response) => { 
+			// playback controls (progress bar and speed buttons)
+			PlayerControls.create(document.getElementById("content"), webRtcServer);
+			fetch(webrtcConfig.url + "/api/version").then(r => r.text()).then( (response) => {
 				document.getElementById("footer").innerHTML = "<p><a href='https://github.com/mpromonet/webrtc-streamer'>WebRTC-Streamer</a> " + response.split(" ")[0] + "</p>";			
 			});			
 		}
 		window.onbeforeunload = function() { this.webRtcServer.disconnect() }
 	} else {
 		let url = prompt("WebRTC stream name to connect:")
-		if (typeof URLSearchParams != 'undefined') {
-			window.location += (window.location.search ? "&" : "?") + `video=${encodeURI(url)}`;
-		} else {
-			window.location += (window.location.search ? "&" : "?") + `${encodeURI(url)}`;
+		if (url && url.trim()) {
+			url = url.trim();
+			if (typeof URLSearchParams != 'undefined') {
+				window.location += (window.location.search ? "&" : "?") + `video=${encodeURIComponent(url)}`;
+			} else {
+				window.location += (window.location.search ? "&" : "?") + `${encodeURIComponent(url)}`;
+			}
 		}
 	}
 </script>

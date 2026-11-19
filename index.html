@@ -1,11 +1,13 @@
 <html>
 <head>
+<meta charset="utf-8">
 <title>WebRTC Streamer</title>
 <link rel="icon" type="image/png" href="webrtc.png" />
 <link rel="stylesheet" type="text/css" href="styles.css">
 <script src="libs/adapter.min.js" ></script>
 <script src="webrtcconfig.js" ></script>
 <script src="webrtcstreamer.js" ></script>
+<script src="playercontrols.js" ></script>
 <script>
 	// ------------------------------------------
 	// WebRTC connections
@@ -187,8 +189,8 @@
 			}			
 		}
 		
-		var videoelt = 	document.getElementById (videoTag);		
-		if (videoelt) {		
+		var videoelt = 	document.getElementById (videoTag);
+		if (videoelt) {
 			// connect video element to webrtc stream
 			var webRtcServer = new WebRtcStreamer(videoTag, webrtcConfig.url);
 
@@ -198,13 +200,16 @@
 			}
 
 			webRtcServer.connect(url.video, url.audio, options, null, prefmime);
-				
-			// highlight the navigation 
+
+			// playback controls (progress bar and speed buttons)
+			PlayerControls.create(videoelt.parentElement, webRtcServer, { compact: true });
+
+			// highlight the navigation
 			var navElt = 	document.getElementById ("nav_" + videoTag);
 			navElt.className = "active";
 
 			// register webrtc streamer connection
-			webRtcServerList[videoTag] = webRtcServer;		
+			webRtcServerList[videoTag] = webRtcServer;
 		}
 	}
 	

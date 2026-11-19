@@ -13,7 +13,11 @@ var WebRtcStreamer = function WebRtcStreamer (videoElement, srvurl) {
 		this.videoElement = videoElement;
 	}
 	this.srvurl           = srvurl || location.protocol+"//"+window.location.hostname+":"+window.location.port;
-	this.pc               = null;    
+	this.pc               = null;
+	this.controlChannel   = null;
+
+	// callback answering playback state changes, set with setRate/seek/getProgress
+	this.onProgress       = null;
 
 	this.mediaConstraints = { offerToReceiveAudio: true, offerToReceiveVideo: true };
 
@@ -28,8 +32,26 @@ WebRtcStreamer.prototype._handleHttpErrors = function (response) {
     return response;
 }
 
-/** 
- * Connect a WebRTC Stream to videoElement 
+/**
+ * The parameters of a stream url following its '?' are split by the browser
+ * as page parameters (the '&' of the stream url is a page parameter separator),
+ * reassemble the page parameters that are missing from the stream url
+ * @param {string} url - url of the stream
+*/
+WebRtcStreamer.reassembleUrlParams = function(url) {
+	if (url && (url.indexOf("?") > 0) && (typeof URLSearchParams != 'undefined')) {
+		let pageParams = new URLSearchParams(location.search);
+		["starttime", "endtime", "ntptime", "name", "size"].forEach( (param) => {
+			if ( pageParams.has(param) && (url.indexOf(param + "=") < 0) ) {
+				url += "&" + param + "=" + pageParams.get(param);
+			}
+		} );
+	}
+	return url;
+}
+
+/**
+ * Connect a WebRTC Stream to videoElement
  * @param {string} videourl - id of WebRTC video stream
  * @param {string} audiourl - id of WebRTC audio stream
  * @param {string} options  -  options of WebRTC call
@@ -38,7 +60,11 @@ WebRtcStreamer.prototype._handleHttpErrors = function (response) {
 */
 WebRtcStreamer.prototype.connect = function(videourl, audiourl, options, localstream, prefmime) {
 	this.disconnect();
-	
+
+	// reassemble the stream url parameters split by the browser as page parameters
+	videourl = WebRtcStreamer.reassembleUrlParams(videourl);
+	audiourl = WebRtcStreamer.reassembleUrlParams(audiourl);
+
 	// getIceServers is not already received
 	if (!this.iceServers) {
 		console.log("Get IceServers");
@@ -77,8 +103,140 @@ WebRtcStreamer.prototype.disconnect = function() {
 			console.log ("Failure close peer connection:" + e);
 		}
 		this.pc = null;
+		this.controlChannel = null;
 	}
-}    
+}
+
+/**
+ * Send a playback control command on the data channel
+ * @param {string} cmd    - command: speed, seek, progress
+ * @param {number} value  - value of the command
+*/
+WebRtcStreamer.prototype.sendCommand = function(cmd, value) {
+	if (this.controlChannel && this.controlChannel.readyState === "open") {
+		let command = { cmd: cmd };
+		if (value !== undefined) {
+			command.value = value;
+		}
+		this.controlChannel.send(JSON.stringify(command));
+		return true;
+	}
+	console.log("control channel is not open, cannot send " + cmd);
+	return false;
+}
+
+/**
+ * Change the playback speed (e.g. 0.5, 2, 4)
+ * The command is sent on the data channel, falling back to the HTTP API
+ * @param {number} rate - playback speed
+*/
+WebRtcStreamer.prototype.setRate = function(rate) {
+	if (this.sendCommand("speed", rate)) {
+		return true;
+	}
+	if (this.pc) {
+		fetch(this.srvurl + "/api/speed?peerid=" + this.pc.peerid + "&rate=" + rate)
+			.then(this._handleHttpErrors)
+			.then( (response) => (response.json()) )
+			.then( (response) => { if (this.onProgress) this.onProgress(response); } )
+			.catch( (error) => this.onError("speed " + error) );
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Seek to a position in seconds
+ * The command is sent on the data channel, falling back to the HTTP API
+ * @param {number} time - position in seconds from the beginning of the stream
+*/
+WebRtcStreamer.prototype.seek = function(time) {
+	if (this.sendCommand("seek", time)) {
+		return true;
+	}
+	if (this.pc) {
+		fetch(this.srvurl + "/api/seek?peerid=" + this.pc.peerid + "&time=" + time)
+			.then(this._handleHttpErrors)
+			.then( (response) => (response.json()) )
+			.then( (response) => { if (this.onProgress) this.onProgress(response); } )
+			.catch( (error) => this.onError("seek " + error) );
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Pause the stream
+ * The command is sent on the data channel, falling back to the HTTP API
+*/
+WebRtcStreamer.prototype.pause = function() {
+	if (this.sendCommand("pause")) {
+		return true;
+	}
+	if (this.pc) {
+		fetch(this.srvurl + "/api/pause?peerid=" + this.pc.peerid)
+			.then(this._handleHttpErrors)
+			.then( (response) => (response.json()) )
+			.then( (response) => { if (this.onProgress) this.onProgress(response); } )
+			.catch( (error) => this.onError("pause " + error) );
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Resume a paused stream
+ * The command is sent on the data channel, falling back to the HTTP API
+*/
+WebRtcStreamer.prototype.resume = function() {
+	if (this.sendCommand("resume")) {
+		return true;
+	}
+	if (this.pc) {
+		fetch(this.srvurl + "/api/resume?peerid=" + this.pc.peerid)
+			.then(this._handleHttpErrors)
+			.then( (response) => (response.json()) )
+			.then( (response) => { if (this.onProgress) this.onProgress(response); } )
+			.catch( (error) => this.onError("resume " + error) );
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Request the playback state, the answer is delivered to the onProgress callback
+ * The command is sent on the data channel, falling back to the HTTP API
+*/
+WebRtcStreamer.prototype.getProgress = function() {
+	if (this.sendCommand("progress")) {
+		return true;
+	}
+	if (this.pc) {
+		fetch(this.srvurl + "/api/progress?peerid=" + this.pc.peerid)
+			.then(this._handleHttpErrors)
+			.then( (response) => (response.json()) )
+			.then( (response) => { if (this.onProgress) this.onProgress(response); } )
+			.catch( (error) => this.onError("progress " + error) );
+		return true;
+	}
+	return false;
+}
+
+/*
+* Control datachannel callback answering playback state (json) or text message
+*/
+WebRtcStreamer.prototype.onControlMessage = function(event) {
+	try {
+		let msg = JSON.parse(event.data);
+		if ( (typeof msg === "object") && (msg !== null) ) {
+			if (this.onProgress) {
+				this.onProgress(msg);
+			}
+			return;
+		}
+	} catch (e) { }
+	console.log("control channel recv:"+JSON.stringify(event.data));
+}
 
 WebRtcStreamer.prototype.filterPreferredCodec = function(sdp, prefmime) {
     const lines = sdp.split('\n');
@@ -242,16 +400,16 @@ WebRtcStreamer.prototype.createPeerConnection = function() {
 			}
 		}
 	}
-	pc.ondatachannel = function(evt) {  
+	pc.ondatachannel = (evt) => {
 		console.log("remote datachannel created:"+JSON.stringify(evt));
-		
+
+		// use the channel created by the server as control channel (playback commands)
+		this.controlChannel = evt.channel;
 		evt.channel.onopen = function () {
 			console.log("remote datachannel open");
 			this.send("remote channel openned");
 		}
-		evt.channel.onmessage = function (event) {
-			console.log("remote datachannel recv:"+JSON.stringify(event.data));
-		}
+		evt.channel.onmessage = (event) => this.onControlMessage(event);
 	}
 
 	try {

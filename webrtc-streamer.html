@@ -21,6 +21,11 @@
             let streamElement = document.getElementById("stream");
 
 			var params = new URLSearchParams(location.search);
+			if (params.get("video") === "null") {
+				// a cancelled prompt is encoded as the literal string "null", drop it and prompt again
+				history.replaceState(null, "", location.pathname);
+				params.delete("video");
+			}
 			if (params.has("options")) {
 				streamElement.setAttribute('options', params.get("options"));
 			}
@@ -30,7 +35,9 @@
 				streamElement.style.display = "block"
 			} else {
 				let url = prompt("WebRTC stream name to connect:")
-				window.location += (window.location.search ? "&" : "?") + `video=${encodeURI(url)}`;
+				if (url && url.trim()) {
+					window.location += (window.location.search ? "&" : "?") + `video=${encodeURIComponent(url.trim())}`;
+				}
 			}
 		}).catch( (e) => {
 			messageElement.innerText = "webrtc-streamer webcomponent fails to initialize error:" + e
